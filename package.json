@@ -1,0 +1,20 @@
+{
+  "name": "drone",
+  "version": "0.0.0",
+  "description": "Map exploration through drone",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "drone",
+    "maps"
+  ],
+  "author": "Per Liedman <per@liedman.net>",
+  "license": "ISC",
+  "dependencies": {
+    "leaflet": "^0.7.3",
+    "leaflet-control-geocoder": "^1.0.0",
+    "leaflet-fullscreen": "0.0.4"
+  }
+}
