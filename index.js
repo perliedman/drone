@@ -733,7 +733,7 @@
 	return L.Control.Geocoder;
 }));
 
-},{"leaflet":3}],2:[function(require,module,exports){
+},{"leaflet":4}],2:[function(require,module,exports){
 L.Control.Fullscreen = L.Control.extend({
     options: {
         position: 'topleft',
@@ -876,6 +876,170 @@ L.control.fullscreen = function (options) {
 };
 
 },{}],3:[function(require,module,exports){
+(function(window) {
+	var HAS_HASHCHANGE = (function() {
+		var doc_mode = window.documentMode;
+		return ('onhashchange' in window) &&
+			(doc_mode === undefined || doc_mode > 7);
+	})();
+
+	L.Hash = function(map) {
+		this.onHashChange = L.Util.bind(this.onHashChange, this);
+
+		if (map) {
+			this.init(map);
+		}
+	};
+
+	L.Hash.parseHash = function(hash) {
+		if(hash.indexOf('#') === 0) {
+			hash = hash.substr(1);
+		}
+		var args = hash.split("/");
+		if (args.length == 3) {
+			var zoom = parseInt(args[0], 10),
+			lat = parseFloat(args[1]),
+			lon = parseFloat(args[2]);
+			if (isNaN(zoom) || isNaN(lat) || isNaN(lon)) {
+				return false;
+			} else {
+				return {
+					center: new L.LatLng(lat, lon),
+					zoom: zoom
+				};
+			}
+		} else {
+			return false;
+		}
+	};
+
+	L.Hash.formatHash = function(map) {
+		var center = map.getCenter(),
+		    zoom = map.getZoom(),
+		    precision = Math.max(0, Math.ceil(Math.log(zoom) / Math.LN2));
+
+		return "#" + [zoom,
+			center.lat.toFixed(precision),
+			center.lng.toFixed(precision)
+		].join("/");
+	},
+
+	L.Hash.prototype = {
+		map: null,
+		lastHash: null,
+
+		parseHash: L.Hash.parseHash,
+		formatHash: L.Hash.formatHash,
+
+		init: function(map) {
+			this.map = map;
+
+			// reset the hash
+			this.lastHash = null;
+			this.onHashChange();
+
+			if (!this.isListening) {
+				this.startListening();
+			}
+		},
+
+		removeFrom: function(map) {
+			if (this.changeTimeout) {
+				clearTimeout(this.changeTimeout);
+			}
+
+			if (this.isListening) {
+				this.stopListening();
+			}
+
+			this.map = null;
+		},
+
+		onMapMove: function() {
+			// bail if we're moving the map (updating from a hash),
+			// or if the map is not yet loaded
+
+			if (this.movingMap || !this.map._loaded) {
+				return false;
+			}
+
+			var hash = this.formatHash(this.map);
+			if (this.lastHash != hash) {
+				location.replace(hash);
+				this.lastHash = hash;
+			}
+		},
+
+		movingMap: false,
+		update: function() {
+			var hash = location.hash;
+			if (hash === this.lastHash) {
+				return;
+			}
+			var parsed = this.parseHash(hash);
+			if (parsed) {
+				this.movingMap = true;
+
+				this.map.setView(parsed.center, parsed.zoom);
+
+				this.movingMap = false;
+			} else {
+				this.onMapMove(this.map);
+			}
+		},
+
+		// defer hash change updates every 100ms
+		changeDefer: 100,
+		changeTimeout: null,
+		onHashChange: function() {
+			// throttle calls to update() so that they only happen every
+			// `changeDefer` ms
+			if (!this.changeTimeout) {
+				var that = this;
+				this.changeTimeout = setTimeout(function() {
+					that.update();
+					that.changeTimeout = null;
+				}, this.changeDefer);
+			}
+		},
+
+		isListening: false,
+		hashChangeInterval: null,
+		startListening: function() {
+			this.map.on("moveend", this.onMapMove, this);
+
+			if (HAS_HASHCHANGE) {
+				L.DomEvent.addListener(window, "hashchange", this.onHashChange);
+			} else {
+				clearInterval(this.hashChangeInterval);
+				this.hashChangeInterval = setInterval(this.onHashChange, 50);
+			}
+			this.isListening = true;
+		},
+
+		stopListening: function() {
+			this.map.off("moveend", this.onMapMove, this);
+
+			if (HAS_HASHCHANGE) {
+				L.DomEvent.removeListener(window, "hashchange", this.onHashChange);
+			} else {
+				clearInterval(this.hashChangeInterval);
+			}
+			this.isListening = false;
+		}
+	};
+	L.hash = function(map) {
+		return new L.Hash(map);
+	};
+	L.Map.prototype.addHash = function() {
+		this._hash = L.hash(this);
+	};
+	L.Map.prototype.removeHash = function() {
+		this._hash.removeFrom();
+	};
+})(window);
+
+},{}],4:[function(require,module,exports){
 (function(){/*
  Leaflet, a JavaScript library for mobile-friendly interactive maps. http://leafletjs.com
  (c) 2010-2013, Vladimir Agafonkin
@@ -10057,7 +10221,7 @@ L.Map.include({
 
 }(window, document));
 })()
-},{}],4:[function(require,module,exports){
+},{}],5:[function(require,module,exports){
 /*
  * Copied from https://gist.github.com/gre/1650294
  * Copyright (c) 2012 Gaëtan Renaudeau
@@ -10095,7 +10259,7 @@ module.exports = {
   // acceleration until halfway, then deceleration 
   easeInOutQuint: function (t) { return t<.5 ? 16*t*t*t*t*t : 1+16*(--t)*t*t*t*t }
 }
-},{}],5:[function(require,module,exports){
+},{}],6:[function(require,module,exports){
 var L = require('leaflet');
 
 require('leaflet-control-geocoder');
@@ -10137,28 +10301,32 @@ module.exports = {
     randomLocation: randomLocation
 };
 
-},{"leaflet":3,"leaflet-control-geocoder":1}],6:[function(require,module,exports){
+},{"leaflet":4,"leaflet-control-geocoder":1}],7:[function(require,module,exports){
 var L = require('leaflet');
 var Ease = require('./ease');
 var rhumbline = require('./rhumbline');
 var Locations = require('./locations');
+var updateInterval = 50;
+var paused = false;
 
 require('leaflet-fullscreen');
+require('leaflet-hash');
 
-var map = L.map('map', { zoomControl: false, attributionControl: false });
+var map;
 
-function setLocationInfo(name) {
-    var el = L.DomUtil.get('location-info');
-    el.classList.remove('fade-in-left');
-    setTimeout(function() {
-        el.innerText = name;
-        el.classList.add('fade-in-left');
-    }, 100);
-}
-
-Locations.randomLocation(map.options.crs.scale, function(err, loc) {
+function main(loc) {
     var p = loc.latLng;
     var tc = Math.random() * Math.PI * 2;
+
+    function setLocationInfo(name) {
+        var el = L.DomUtil.get('location-info');
+        el.classList.remove('fade-in-left');
+        setTimeout(function() {
+            el.innerText = name;
+            el.classList.add('fade-in-left');
+        }, 100);
+    }
+
     map.setView(p, 8);
     setLocationInfo(loc.name);
 
@@ -10214,8 +10382,10 @@ Locations.randomLocation(map.options.crs.scale, function(err, loc) {
     })();
 
     function updatePosition() {
+        if (paused) return;
+
         try {
-            p = rhumbline(p, 2500 / 6371 * Math.PI / (3600*20), tc);
+            p = rhumbline(p, 2500 / 6371 * Math.PI / (3600 * (1000 / updateInterval)), tc);
             map.setView(p, undefined, { animate: false });
         } catch (e) {
             newLocation();
@@ -10238,17 +10408,54 @@ Locations.randomLocation(map.options.crs.scale, function(err, loc) {
         map.toggleFullscreen();
     }
 
-    setInterval(updatePosition, 20);
+    setInterval(updatePosition, updateInterval);
     setInterval(updateLocationInfo, 60 * 1000);
 
-    L.DomEvent.on(window, 'keyup', function(e) {
-        if (e.keyCode === 78) {
+    L.DomEvent.on(window, 'keypress', function(e) {
+        var c = String.fromCharCode(e.charCode).toLowerCase();
+        switch (c) {
+        case '+':
+            map.zoomIn();
+            break;
+        case '-':
+            map.zoomOut();
+            break;
+        case 'n':
             newLocation();
+            break;
+        case 'p':
+            paused = !paused;
+            break;
         }
     });
-});
+}
 
-},{"./ease":4,"./locations":5,"./rhumbline":7,"leaflet":3,"leaflet-fullscreen":2}],7:[function(require,module,exports){
+map = L.map('map', { zoomControl: false, attributionControl: false });
+var hash = L.hash(map);
+hash.stopListening();
+hash.update();
+setInterval(function() { hash.onMapMove(); }, 2000);
+
+if (map.getCenter()) {
+    Locations.location(map.getCenter(), map.options.crs.scale, function(err, result) {
+        if (!err) {
+            main({
+                latLng: map.getCenter(),
+                name: result.name
+            });
+        }
+    });
+} else {
+    Locations.randomLocation(map.options.crs.scale, function(err, loc) {
+        if (!err) {
+            main(loc);
+        } else {
+            console.log('FATAL: couldn\'t get random location: ' + err);
+        }
+    });
+}
+
+},{"./ease":5,"./locations":6,"./rhumbline":8,"leaflet":4,"leaflet-fullscreen":2,"leaflet-hash":3}],8:[function(require,module,exports){
 var L = require('leaflet');
 
 module.exports = function(latLng /* L.LatLng */, d /* Number (meters) */, tc /* Number (radians) */) {
@@ -10274,5 +10481,5 @@ module.exports = function(latLng /* L.LatLng */, d /* Number (meters) */, tc /* 
     return L.latLng(lat / Math.PI * 180, lon / Math.PI * 180);
 };
 
-},{"leaflet":3}]},{},[6])
+},{"leaflet":4}]},{},[7])
 ;
