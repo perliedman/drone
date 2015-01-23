@@ -132,11 +132,17 @@ hash.stopListening();
 hash.update();
 setInterval(function() { hash.onMapMove(); }, 2000);
 
-if (map.getCenter()) {
-    Locations.location(map.getCenter(), map.options.crs.scale, function(err, result) {
+var center;
+
+try {
+    center = map.getCenter();
+} catch (e) {}
+
+if (center) {
+    Locations.location(center, map.options.crs.scale, function(err, result) {
         if (!err) {
             main({
-                latLng: map.getCenter(),
+                latLng: center,
                 name: result.name
             });
         }
