@@ -10222,6 +10222,102 @@ L.Map.include({
 }(window, document));
 })()
 },{}],5:[function(require,module,exports){
+var L = require('leaflet'),
+    Ease = require('./ease'),
+    rhumbline = require('./rhumbline');
+
+module.exports = L.Class.extend({
+    includes: L.Mixin.Events,
+
+    options: {
+        updateInterval: 50,
+        speed: 2500
+    },
+
+    initialize: function(startPos, startCourse, options) {
+        L.setOptions(this, options);
+
+        this.pos = startPos;
+        this.course = startCourse;
+        this._setupNextTurn(new Date().getTime());
+        this._startTimers();
+    },
+
+    pause: function() {
+        this._paused = true;
+        this._stopTimers();
+    },
+
+    unpause: function() {
+        this._paused = false;
+        this._lastT = new Date().getTime();
+        this._startTimers();
+    },
+
+    togglePause: function() {
+        if (this._paused) {
+            this.unpause();
+        } else {
+            this.pause();
+        }
+    },
+
+    updatePosition: function() {
+        var t = new Date().getTime(),
+            dt = this._lastT ? t - this._lastT : undefined;
+
+        this._lastT = t;
+
+        if (this._paused || !dt) return;
+
+        this._turn(t, dt);
+        this._move(dt);
+
+    },
+
+    _startTimers: function() {
+        this._updateTimer = setInterval(L.bind(this.updatePosition, this), this.options.updateInterval);
+    },
+
+    _stopTimers: function() {
+        clearInterval(this._updateTimer);
+    },
+
+    _turn: function(t, dt) {
+        var p;
+
+        this._timeToTurn -= dt;
+
+        if (this._timeToTurn <= 0) {
+            this._turnTimer -= dt;
+            p = Math.min(1, (-this._turnStart + t) / this._turnTime);
+            this.course = Ease.easeInOutCubic(p) * this._courseChange + this._startCourse;
+
+            if (this._turnTimer <= 0) {
+                this._setupNextTurn(t);
+            }
+        }
+    },
+
+    _move: function(dt) {
+        try {
+            this.pos = rhumbline(this.pos, 2500 / 6371 * Math.PI / (3600 * (1000 / dt)), this.course);
+            this.fire('move', {position: this.pos});
+        } catch (e) {
+            this.fire('moveerror');
+        }
+    },
+
+    _setupNextTurn: function(t) {
+        this._timeToTurn = Math.random() * 3 * 60 * 1000;
+        this._turnStart = t + this._timeToTurn;
+        this._courseChange = Math.random() * Math.PI / 2 - Math.PI / 4;
+        this._turnTimer = this._turnTime = Math.abs(this._courseChange) / Math.PI * 2 * 60 * 1000;
+        this._startCourse = this.course;
+    }
+});
+
+},{"./ease":6,"./rhumbline":9,"leaflet":4}],6:[function(require,module,exports){
 /*
  * Copied from https://gist.github.com/gre/1650294
  * Copyright (c) 2012 Gaëtan Renaudeau
@@ -10259,7 +10355,7 @@ module.exports = {
   // acceleration until halfway, then deceleration 
   easeInOutQuint: function (t) { return t<.5 ? 16*t*t*t*t*t : 1+16*(--t)*t*t*t*t }
 }
-},{}],6:[function(require,module,exports){
+},{}],7:[function(require,module,exports){
 var L = require('leaflet');
 
 require('leaflet-control-geocoder');
@@ -10301,13 +10397,10 @@ module.exports = {
     randomLocation: randomLocation
 };
 
-},{"leaflet":4,"leaflet-control-geocoder":1}],7:[function(require,module,exports){
+},{"leaflet":4,"leaflet-control-geocoder":1}],8:[function(require,module,exports){
 var L = require('leaflet');
-var Ease = require('./ease');
-var rhumbline = require('./rhumbline');
 var Locations = require('./locations');
-var updateInterval = 50;
-var paused = false;
+var Drone = require('./drone');
 
 require('leaflet-fullscreen');
 require('leaflet-hash');
@@ -10315,8 +10408,30 @@ require('leaflet-hash');
 var map;
 
 function main(loc) {
-    var p = loc.latLng;
-    var tc = Math.random() * Math.PI * 2;
+    var newLocation = (function() {
+        var sceneChangeTimer;
+
+        return function () {
+            L.DomUtil.get('new-location').classList.remove('fade-out');
+            L.DomUtil.get('new-location').classList.remove('hidden');
+            Locations.randomLocation(map.options.crs.scale, function(err, loc) {
+                if (!err) {
+                    L.DomUtil.get('new-location').classList.add('fade-out');
+
+                    if (sceneChangeTimer) {
+                        clearTimeout(sceneChangeTimer);
+                    }
+
+                    sceneChangeTimer = setTimeout(newLocation, 5 * 60 * 1000);
+
+                    drone.pos = loc.latLng;
+                    setLocationInfo(loc.name);
+                }
+            });
+        };
+    })();
+    var drone,
+        locationInfoTimer;
 
     function setLocationInfo(name) {
         var el = L.DomUtil.get('location-info');
@@ -10325,75 +10440,13 @@ function main(loc) {
             el.innerText = name;
             el.classList.add('fade-in-left');
         }, 100);
+
+        clearTimeout(locationInfoTimer);
+        locationInfoTimer = setTimeout(updateLocationInfo, 60 * 1000);
     }
 
-    map.setView(p, 8);
-    setLocationInfo(loc.name);
-
-    (function() {
-        var startCourse;
-        var courseChange;
-        var tstart;
-        var tend;
-
-        function waitForTurn() {
-            setTimeout(newTurn, Math.random() * 3 * 60 * 1000);
-        }
-
-        function newTurn() {
-            courseChange = Math.random() * Math.PI / 2 - Math.PI / 4;
-            startCourse = tc;
-            tstart = new Date().getTime();
-            tend = tstart + Math.abs(courseChange) / Math.PI * 2 * 60 * 1000;
-            setTimeout(turn, 20);
-        }
-
-        function turn() {
-            var t = new Date().getTime();
-            var p = Math.max(1, (t - tstart) / (tend - tstart));
-            tc = Ease.easeInOutCubic(p) * courseChange + startCourse;
-            if (p < 1) {
-                setTimeout(turn, 20);
-            } else {
-                waitForTurn();
-            }
-        }
-
-        return waitForTurn;
-    })()();
-
-    var newLocation = (function() {
-        var sceneChangeTimer;
-
-        return function () {
-            Locations.randomLocation(map.options.crs.scale, function(err, loc) {
-                if (!err) {
-                    if (sceneChangeTimer) {
-                        clearTimeout(sceneChangeTimer);
-                    }
-
-                    sceneChangeTimer = setTimeout(newLocation, 5 * 60 * 1000);
-
-                    p = loc.latLng;
-                    setLocationInfo(loc.name);
-                }
-            });
-        };
-    })();
-
-    function updatePosition() {
-        if (paused) return;
-
-        try {
-            p = rhumbline(p, 2500 / 6371 * Math.PI / (3600 * (1000 / updateInterval)), tc);
-            map.setView(p, undefined, { animate: false });
-        } catch (e) {
-            newLocation();
-        }
-    }
-    
     function updateLocationInfo() {
-        Locations.location(p, map.options.crs.scale, function(err, result) {
+        Locations.location(drone.pos, map.options.crs.scale, function(err, result) {
             if (!err) {
                 setLocationInfo(result.name);
             } else {
@@ -10402,14 +10455,20 @@ function main(loc) {
         });
     }
 
-    L.tileLayer('http://api.tiles.mapbox.com/v3/liedman.l1561h3i/{z}/{x}/{y}.png').addTo(map);
+    drone = new Drone(loc.latLng, Math.random() * Math.PI * 2);
+    drone.on('move', function(e) {
+        map.setView(e.position, undefined, { animate: false });
+    });
+    drone.on('moveerror', function() {
+        newLocation();
+    });
+
+    map.setView(drone.pos, 8);
+    setLocationInfo(loc.name);
 
     if (!map.isFullscreen()) {
         map.toggleFullscreen();
     }
-
-    setInterval(updatePosition, updateInterval);
-    setInterval(updateLocationInfo, 60 * 1000);
 
     L.DomEvent.on(window, 'keypress', function(e) {
         var c = String.fromCharCode(e.charCode).toLowerCase();
@@ -10424,13 +10483,14 @@ function main(loc) {
             newLocation();
             break;
         case 'p':
-            paused = !paused;
+            drone.togglePause();
             break;
         }
     });
 }
 
 map = L.map('map', { zoomControl: false, attributionControl: false });
+L.tileLayer('http://api.tiles.mapbox.com/v3/liedman.l1561h3i/{z}/{x}/{y}.png').addTo(map);
 var hash = L.hash(map);
 hash.stopListening();
 hash.update();
@@ -10461,7 +10521,7 @@ if (center) {
     });
 }
 
-},{"./ease":5,"./locations":6,"./rhumbline":8,"leaflet":4,"leaflet-fullscreen":2,"leaflet-hash":3}],8:[function(require,module,exports){
+},{"./drone":5,"./locations":7,"leaflet":4,"leaflet-fullscreen":2,"leaflet-hash":3}],9:[function(require,module,exports){
 var L = require('leaflet');
 
 module.exports = function(latLng /* L.LatLng */, d /* Number (meters) */, tc /* Number (radians) */) {
@@ -10487,5 +10547,5 @@ module.exports = function(latLng /* L.LatLng */, d /* Number (meters) */, tc /* 
     return L.latLng(lat / Math.PI * 180, lon / Math.PI * 180);
 };
 
-},{"leaflet":4}]},{},[7])
+},{"leaflet":4}]},{},[8])
 ;
