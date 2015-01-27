@@ -10455,6 +10455,8 @@ function main(loc) {
         });
     }
 
+    L.DomUtil.get('new-location').classList.add('fade-out');
+
     drone = new Drone(loc.latLng, Math.random() * Math.PI * 2);
     drone.on('move', function(e) {
         map.setView(e.position, undefined, { animate: false });
@@ -10501,6 +10503,8 @@ var center;
 try {
     center = map.getCenter();
 } catch (e) {}
+
+L.DomUtil.get('new-location').classList.remove('hidden');
 
 if (center) {
     Locations.location(center, map.options.crs.scale, function(err, result) {
