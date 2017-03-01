@@ -13,9 +13,9 @@
   "author": "Per Liedman <per@liedman.net>",
   "license": "ISC",
   "dependencies": {
-    "leaflet": "^0.7.3",
+    "leaflet": "^1.0.3",
     "leaflet-control-geocoder": "^1.0.0",
-    "leaflet-fullscreen": "0.0.4",
+    "leaflet-fullscreen": "1.0.2",
     "leaflet-hash": "^0.2.1"
   }
 }
